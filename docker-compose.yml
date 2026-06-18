@@ -1,0 +1,34 @@
+services:
+  backend:
+    build: ./backend
+    container_name: user-management-backend
+    ports:
+      - "8288:8288"
+    environment:
+      - PORT=8288
+      - NODE_ENV=production
+      - JWT_SECRET=${JWT_SECRET:-change-this-secret-in-production}
+      - DATABASE_PATH=/app/database/users.db
+    volumes:
+      - backend-data:/app/database
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: user-management-frontend
+    ports:
+      - "3288:80"
+    depends_on:
+      - backend
+    networks:
+      - app-network
+    restart: unless-stopped
+
+volumes:
+  backend-data:
+
+networks:
+  app-network:
+    driver: bridge
