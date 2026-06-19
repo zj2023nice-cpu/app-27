@@ -1,11 +1,12 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import db from '../database/db.js';
-import { verifyToken, requireAdmin } from '../middleware/auth.js';
+import { verifyToken, requireActive, requireAdmin, isAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
 router.use(verifyToken);
+router.use(requireActive);
 
 router.get('/', (req, res) => {
   try {
@@ -66,32 +67,51 @@ router.post('/', requireAdmin, (req, res) => {
 
 router.put('/:id', (req, res) => {
   try {
-    const { id } = req.params;
     const { username, email, status, roleIds } = req.body;
 
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    const targetId = Number(req.params.id);
+    const tokenUserId = Number(req.user?.id);
+    if (!Number.isInteger(targetId) || targetId <= 0) {
+      return res.status(400).json({ success: false, message: '用户ID无效' });
+    }
+
+    const admin = isAdmin(req.user);
+    if (!admin && tokenUserId !== targetId) {
+      return res.status(403).json({ success: false, message: '无权修改其他用户' });
+    }
+
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(targetId);
     if (!user) {
       return res.status(404).json({ success: false, message: '用户不存在' });
     }
 
     // 检查用户名/邮箱是否被其他用户占用
-    const existing = db.prepare('SELECT id FROM users WHERE (username = ? OR email = ?) AND id != ?').get(username, email, id);
+    const existing = db.prepare('SELECT id FROM users WHERE (username = ? OR email = ?) AND id != ?').get(username, email, targetId);
     if (existing) {
       return res.status(409).json({ success: false, message: '用户名或邮箱已存在' });
     }
 
-    db.prepare(`
-      UPDATE users
-      SET username = ?, email = ?, status = ?, updated_at = CURRENT_TIMESTAMP
-      WHERE id = ?
-    `).run(username, email, status, id);
+    if (admin) {
+      db.prepare(`
+        UPDATE users
+        SET username = ?, email = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(username, email, status, targetId);
 
-    if (roleIds && Array.isArray(roleIds)) {
-      db.prepare('DELETE FROM user_roles WHERE user_id = ?').run(id);
-      const insertRole = db.prepare('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)');
-      for (const roleId of roleIds) {
-        insertRole.run(id, roleId);
+      if (roleIds && Array.isArray(roleIds)) {
+        db.prepare('DELETE FROM user_roles WHERE user_id = ?').run(targetId);
+        const insertRole = db.prepare('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)');
+        for (const roleId of roleIds) {
+          insertRole.run(targetId, roleId);
+        }
       }
+    } else {
+      // 普通用户：只能修改自己的基础信息，禁止修改 status / roleIds
+      db.prepare(`
+        UPDATE users
+        SET username = ?, email = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `).run(username, email, targetId);
     }
 
     res.json({ success: true, message: '更新成功' });
