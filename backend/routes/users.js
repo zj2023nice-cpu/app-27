@@ -1,11 +1,12 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import db from '../database/db.js';
-import { verifyToken, requireAdmin } from '../middleware/auth.js';
+import { verifyToken, requireActiveUser, requireAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
 router.use(verifyToken);
+router.use(requireActiveUser);
 
 router.get('/', (req, res) => {
   try {
@@ -67,15 +68,38 @@ router.post('/', requireAdmin, (req, res) => {
 router.put('/:id', (req, res) => {
   try {
     const { id } = req.params;
-    const { username, email, status, roleIds } = req.body;
+    const targetId = parseInt(id, 10);
+    const currentUserId = parseInt(req.user.id, 10);
+    const isAdmin = req.user?.roles?.includes('管理员');
+    const isSelf = currentUserId === targetId;
 
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(targetId);
     if (!user) {
       return res.status(404).json({ success: false, message: '用户不存在' });
     }
 
-    // 检查用户名/邮箱是否被其他用户占用
-    const existing = db.prepare('SELECT id FROM users WHERE (username = ? OR email = ?) AND id != ?').get(username, email, id);
+    if (!isAdmin && !isSelf) {
+      return res.status(403).json({ success: false, message: '无权限修改其他用户' });
+    }
+
+    let { username, email, status, roleIds } = req.body;
+
+    if (!isAdmin) {
+      if (roleIds !== undefined) {
+        return res.status(403).json({ success: false, message: '无权限修改用户角色' });
+      }
+      if (status !== undefined && status !== user.status) {
+        return res.status(403).json({ success: false, message: '无权限修改用户状态' });
+      }
+      status = user.status;
+      roleIds = null;
+    }
+
+    if (username === undefined) username = user.username;
+    if (email === undefined) email = user.email;
+    if (status === undefined) status = user.status;
+
+    const existing = db.prepare('SELECT id FROM users WHERE (username = ? OR email = ?) AND id != ?').get(username, email, targetId);
     if (existing) {
       return res.status(409).json({ success: false, message: '用户名或邮箱已存在' });
     }
@@ -84,13 +108,13 @@ router.put('/:id', (req, res) => {
       UPDATE users
       SET username = ?, email = ?, status = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(username, email, status, id);
+    `).run(username, email, status, targetId);
 
-    if (roleIds && Array.isArray(roleIds)) {
-      db.prepare('DELETE FROM user_roles WHERE user_id = ?').run(id);
+    if (isAdmin && roleIds && Array.isArray(roleIds)) {
+      db.prepare('DELETE FROM user_roles WHERE user_id = ?').run(targetId);
       const insertRole = db.prepare('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)');
       for (const roleId of roleIds) {
-        insertRole.run(id, roleId);
+        insertRole.run(targetId, roleId);
       }
     }
 

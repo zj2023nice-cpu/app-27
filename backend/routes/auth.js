@@ -35,6 +35,10 @@ router.post('/login', (req, res) => {
       return res.status(401).json({ success: false, message: '用户名或密码错误' });
     }
 
+    if (user.status === 'inactive') {
+      return res.status(403).json({ success: false, message: '账号已被禁用' });
+    }
+
     const roles = db.prepare(`
         SELECT r.name FROM roles r
         INNER JOIN user_roles ur ON r.id = ur.role_id
