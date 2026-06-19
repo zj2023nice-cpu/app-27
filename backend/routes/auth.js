@@ -35,19 +35,21 @@ router.post('/login', (req, res) => {
       return res.status(401).json({ success: false, message: '用户名或密码错误' });
     }
 
-    const roles = db.prepare(`
-        SELECT r.name FROM roles r
+    const rolesData = db.prepare(`
+        SELECT r.id, r.name FROM roles r
         INNER JOIN user_roles ur ON r.id = ur.role_id
         WHERE ur.user_id = ?
-      `).all(user.id).map(r => r.name);
+      `).all(user.id);
+    const roles = rolesData.map(r => r.name);
+    const roleIds = rolesData.map(r => r.id);
 
-    const token = jwt.sign({ id: user.id, username: user.username, roles }, JWT_SECRET, { expiresIn: '24h' });
+    const token = jwt.sign({ id: user.id, username: user.username, roles, roleIds }, JWT_SECRET, { expiresIn: '24h' });
 
     res.json({
       success: true,
       data: {
         token,
-        user: { id: user.id, username: user.username, email: user.email, roles }
+        user: { id: user.id, username: user.username, email: user.email, nickname: user.nickname, status: user.status, roles, roleIds }
       }
     });
   } catch (error) {
