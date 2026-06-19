@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken';
+import db from '../database/db.js';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'secret';
 
@@ -11,7 +12,14 @@ export function verifyToken(req, res, next) {
   const token = authHeader.split(' ')[1];
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    req.user = decoded;
+    const currentUser = db.prepare('SELECT id, status FROM users WHERE id = ?').get(decoded.id);
+    if (!currentUser) {
+      return res.status(401).json({ success: false, message: '用户不存在' });
+    }
+    if (currentUser.status === 'inactive') {
+      return res.status(403).json({ success: false, message: '账户已被禁用，请联系管理员' });
+    }
+    req.user = { ...decoded, status: currentUser.status };
     next();
   } catch (error) {
     return res.status(401).json({ success: false, message: 'Token无效或已过期' });
