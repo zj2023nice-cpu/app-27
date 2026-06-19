@@ -67,30 +67,53 @@ router.post('/', requireAdmin, (req, res) => {
 router.put('/:id', (req, res) => {
   try {
     const { id } = req.params;
-    const { username, email, status, roleIds } = req.body;
+    const isAdmin = req.user?.roles?.includes('管理员');
+    const targetId = parseInt(id);
 
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    if (!isAdmin && req.user.id !== targetId) {
+      return res.status(403).json({ success: false, message: '无权修改其他用户信息' });
+    }
+
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(targetId);
     if (!user) {
       return res.status(404).json({ success: false, message: '用户不存在' });
     }
 
-    // 检查用户名/邮箱是否被其他用户占用
-    const existing = db.prepare('SELECT id FROM users WHERE (username = ? OR email = ?) AND id != ?').get(username, email, id);
+    const { username, email, nickname, phone, gender, description } = req.body;
+    let { status, roleIds } = req.body;
+
+    if (!isAdmin) {
+      if (status !== undefined || roleIds !== undefined) {
+        return res.status(403).json({ success: false, message: '普通用户无权修改角色或状态' });
+      }
+      status = user.status;
+      roleIds = null;
+    }
+
+    const finalUsername = username ?? user.username;
+    const finalEmail = email ?? user.email;
+    const finalNickname = nickname ?? user.nickname;
+    const finalPhone = phone ?? user.phone;
+    const finalGender = gender ?? user.gender;
+    const finalDescription = description ?? user.description;
+    const finalStatus = status ?? user.status;
+
+    const existing = db.prepare('SELECT id FROM users WHERE (username = ? OR email = ?) AND id != ?').get(finalUsername, finalEmail, targetId);
     if (existing) {
       return res.status(409).json({ success: false, message: '用户名或邮箱已存在' });
     }
 
     db.prepare(`
       UPDATE users
-      SET username = ?, email = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+      SET username = ?, email = ?, nickname = ?, phone = ?, gender = ?, description = ?, status = ?, updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(username, email, status, id);
+    `).run(finalUsername, finalEmail, finalNickname, finalPhone, finalGender, finalDescription, finalStatus, targetId);
 
-    if (roleIds && Array.isArray(roleIds)) {
-      db.prepare('DELETE FROM user_roles WHERE user_id = ?').run(id);
+    if (isAdmin && roleIds && Array.isArray(roleIds)) {
+      db.prepare('DELETE FROM user_roles WHERE user_id = ?').run(targetId);
       const insertRole = db.prepare('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)');
       for (const roleId of roleIds) {
-        insertRole.run(id, roleId);
+        insertRole.run(targetId, roleId);
       }
     }
 
